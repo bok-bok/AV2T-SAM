@@ -1,0 +1,26 @@
+**/__pycache__
+.vscode/
+/vis
+/infer
+/*.sh
+/runs
+/video_exp
+
+# /model/segment_anything_2/sam2/_C.so
+# /model/segment_anything_2/build
+# /evf-sam2
+
+/prac2.py
+/trash
+
+/pretrained
+/tmp
+/wandb
+/weights
+/slurm_log
+/model/arc
+
+/clap_prac.py
+/analyze.ipynb
+ex.txt
+
