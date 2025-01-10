@@ -218,7 +218,7 @@ def make_dataloader(args):
     elif args.dataset == "s4":
         train_loader = DataLoader(S4Dataset_SAM(split='train', args = args), batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers,
                               pin_memory=True)
-        val_loader = DataLoader(S4Dataset_SAM(split='val', args = args), batch_size=3, shuffle=False, num_workers=args.num_workers,
+        val_loader = DataLoader(S4Dataset_SAM(split='val', args = args), batch_size=2, shuffle=False, num_workers=args.num_workers,
                             pin_memory=True)
         test_loader = DataLoader(S4Dataset_SAM(split='test', args = args), batch_size=1, shuffle=False, num_workers=args.num_workers,
                              pin_memory=True)
@@ -247,9 +247,9 @@ def get_model(args) -> AVTSAM:
                     model.model.visual_model.image_encoder.trunk.blocks[i].to(f"cuda:0")
         else:
             for i in range(32):
-                if i < 10:
+                if i < 9:
                     model.model.visual_model.image_encoder.blocks[i].to(f"cuda:3")
-                elif i < 20:
+                elif i < 18:
                     model.model.visual_model.image_encoder.blocks[i].to(f"cuda:2")
                 elif i < 29:
                     model.model.visual_model.image_encoder.blocks[i].to(f"cuda:1")
@@ -273,7 +273,7 @@ def main(args):
 
 
     if args.wandb:
-        wandb.init(project="avsbench", config=args,
+        wandb.init(project=f"avsbench_{args.dataset}", config=args,
                     name=name,
                 )
     
@@ -287,6 +287,8 @@ def main(args):
 
     # Load data loaders
     train_loader, val_loader, test_loader = make_dataloader(args)
+
+    val_interval = 2 if args.dataset == "s4" else 1
 
     for epoch in range(args.max_epochs):
 
@@ -305,7 +307,8 @@ def main(args):
         scheduler.step()
 
         # Validate
-        if epoch % 1 == 0:
+
+        if epoch % val_interval == 0:
             eval_result = validate(val_loader, model, args)
             if args.wandb:
                 wandb.log({
