@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 
 class Projector(nn.Module):
-    def __init__(self, type = "clap", audio_embedding_dim=1024, vision_embedding_dim=512, common_dim=512, num_heads=8, norm = True):
+    def __init__(self, type = "clap", audio_embedding_dim=1024, vision_embedding_dim=512, common_dim=512):
         super(Projector, self).__init__()
 
         self.common_dim = common_dim
@@ -16,13 +16,7 @@ class Projector(nn.Module):
 
         self.clip_clap_mul_features = None
         self.features = None
-        self.norm = norm 
 
-        if norm:
-            print("Using normalization")
-        else:
-            print("Not using normalization")
-        
         
         # Projection layers to map embeddings to a common dimension
         self.audio_proj = nn.Linear(audio_embedding_dim, common_dim)
@@ -86,14 +80,11 @@ class Projector(nn.Module):
     def get_features(self, audio_embeddings :torch.Tensor, vision_embeddings: torch.Tensor) -> torch.Tensor:
 
         if self.project_type == "clap":
-            # if self.norm:
-            #     audio_embeddings = F.normalize(audio_embeddings, p=2, dim=-1)
             features = self.audio_proj(audio_embeddings)
         elif self.project_type == "clip":
             features = self.vision_proj(vision_embeddings)
         elif self.project_type == "mul":
             # normalize the embeddings
-            # if self.norm:
             audio_embeddings = F.normalize(audio_embeddings, p=2, dim=-1)
             vision_embeddings = F.normalize(vision_embeddings, p=2, dim=-1)
 

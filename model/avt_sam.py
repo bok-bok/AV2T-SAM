@@ -15,10 +15,9 @@ class AVTSAM(nn.Module):
         self.depth = 32
 
         self.tokenizer, self.model = self.init_model()
-        # self.projector = Projector(args.projector_type, audio_embedding_dim=1024, vision_embedding_dim=512, common_dim=512, num_heads=8, norm=args.normalize)
         self.common_dim = 512
         self.visual_dim = 256
-        self.projector = Projector(args.projector_type, audio_embedding_dim=1024, vision_embedding_dim=512, common_dim=self.common_dim, num_heads=8, norm=args.normalize)
+        self.projector = Projector(args.projector_type, audio_embedding_dim=1024, vision_embedding_dim=512, common_dim=self.common_dim)
 
         self.prompt_feature_up_layer = nn.Linear(self.visual_dim, self.common_dim)
         self.prompt_feature_down_layer = nn.Linear(self.common_dim, self.visual_dim)
@@ -41,6 +40,7 @@ class AVTSAM(nn.Module):
         if self.args.evf_version == "evf_sam":
             print("Using evf_sam")
             version = "YxZhang/evf-sam"
+            version = "YxZhang/evf-sam-multitask"
             tokenizer = AutoTokenizer.from_pretrained(
                 version,
                 padding_side="right",

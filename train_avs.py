@@ -369,7 +369,6 @@ if __name__ == "__main__":
 
     # training
     parser.add_argument("--wandb", action="store_true", help="Use wandb for logging")
-    parser.add_argument("--normalize", action="store_true", help="normalize features")
     parser.add_argument("--augmentation", action="store_true", help="Use data augmentation")
 
     parser.add_argument("--visual_aug", type=float, default=0.0, help="Visual augmentation")
