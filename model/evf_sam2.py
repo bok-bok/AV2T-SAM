@@ -1,15 +1,20 @@
-from typing import List
 import os
+from collections import OrderedDict
+from typing import List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import PreTrainedModel, AutoConfig, AutoModelForCausalLM
-from .segment_anything_2.sam2.build_sam import build_sam2
-from .unilm.beit3.modeling_utils import BEiT3Wrapper, _get_base_config, _get_large_config
-from .configuration_evf import EvfConfig
-from .segment_anything_2.sam2.utils.misc import load_video_frames
-from collections import OrderedDict
+from transformers import AutoConfig, AutoModelForCausalLM, PreTrainedModel
 
+from .configuration_evf import EvfConfig
+from .segment_anything_2.sam2.build_sam import build_sam2
+from .segment_anything_2.sam2.utils.misc import load_video_frames
+from .unilm.beit3.modeling_utils import (
+    BEiT3Wrapper,
+    _get_base_config,
+    _get_large_config,
+)
 
 
 def dice_loss(
@@ -86,10 +91,7 @@ class EvfSam2Model(PreTrainedModel):
     def initialize_evf_modules(self, config):
         # SAM
         if config.sam_scale=="large":
-            if self.args.cross_attn:
-                self.visual_model = build_sam2("sam2_hiera_l_cross.yaml", self.vision_pretrained, device=None)
-            else:
-                self.visual_model = build_sam2("sam2_hiera_l.yaml", self.vision_pretrained, device=None)
+            self.visual_model = build_sam2("sam2_hiera_l.yaml", self.vision_pretrained, device=None)
         elif config.sam_scale=="tiny":
             self.visual_model = build_sam2("sam2_hiera_t.yaml", self.vision_pretrained, device=None)
         else:
@@ -131,7 +133,6 @@ class EvfSam2Model(PreTrainedModel):
             )
 
         for param in self.mm_extractor.parameters():
-            # param.requires_grad = True
             param.requires_grad = False
                 
         # Projection layer
@@ -145,11 +146,9 @@ class EvfSam2Model(PreTrainedModel):
             nn.Linear(in_dim, out_dim)
         ]
         self.text_hidden_fcs = nn.ModuleList([nn.Sequential(*text_fc)])
-        # self.text_hidden_fcs.eval()
         self.text_hidden_fcs[0].train()
         for param in self.text_hidden_fcs.parameters():
             param.requires_grad = True
-            # param.requires_grad = False
 
     def postprocess_masks(self, masks: torch.Tensor, orig_hw) -> torch.Tensor:
         """
@@ -172,9 +171,7 @@ class EvfSam2Model(PreTrainedModel):
         inference: bool = False,
         **kwargs,
     ):
-        # image_embeddings = self.get_visual_embs(images)     
         backbone_out = self.visual_model.forward_image(images)
-        # dict_keys(['vision_features', 'vision_pos_enc', 'backbone_fpn'])
         _, image_embeddings, _, _ = self.visual_model._prepare_backbone_features(backbone_out)
         image_embeddings = [_.to(images.dtype) for _ in image_embeddings]
         batch_size = images.shape[0]
