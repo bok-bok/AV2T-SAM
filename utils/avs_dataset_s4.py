@@ -1,20 +1,21 @@
 import os
-import torch
-from torch.utils.data import Dataset
-
-import pandas as pd
 import pickle
-from model.segment_anything.utils.transforms import ResizeLongestSide
-import cv2
-import clip
-from PIL import Image
-from torchvision import transforms
 import sys
 
+import clip
+import cv2
+import pandas as pd
+import torch
+from PIL import Image
+from torch.utils.data import Dataset
+from torchvision import transforms
+
+from model.segment_anything.utils.transforms import ResizeLongestSide
 from utils.config_s4 import cfg
+
 sys.path.append("CLAP")
-import random
 import copy
+import random
 
 from msclap import CLAP
 
@@ -39,7 +40,7 @@ class S4Dataset_SAM(Dataset):  # Class name updated for single sound source
     pixel_mean = torch.Tensor([123.675, 116.28, 103.53]).view(-1, 1, 1)
     pixel_std = torch.Tensor([58.395, 57.12, 57.375]).view(-1, 1, 1)
 
-    def __init__(self, split, args):
+    def __init__(self, split):
         super(S4Dataset_SAM, self).__init__()
         self.device = "cuda"
 
@@ -48,20 +49,6 @@ class S4Dataset_SAM(Dataset):  # Class name updated for single sound source
 
         # Handle mask_num based on split
         self.mask_num = 1 if split == 'train' else 5  # Updated logic for mask_num
-
-        if split != 'train':
-            args.augmentation = False
-            args.audio_aug = 0
-            args.visual_aug = 0
-
-        if args.augmentation:
-            print("Augmentation is applied")
-            print(f"Audio Augmentation: {args.audio_aug}, Visual Augmentation: {args.visual_aug}")
-
-        # set augmentation
-        self.augmentation = args.augmentation
-        self.audio_aug = args.audio_aug
-        self.visual_aug = args.visual_aug
 
         # Filter dataframe with `split` and added support for `category`
         df_all = pd.read_csv(cfg.DATA.ANNO_CSV, sep=',')
@@ -83,18 +70,6 @@ class S4Dataset_SAM(Dataset):  # Class name updated for single sound source
         self.clip_model, self.clip_preprocess = clip.load("ViT-B/32", device='cuda')
         self.clip_model.float()
 
-        with open("/projects/bcza/kb7180/avsbench_data/noise.pkl", "rb") as fr:
-            self.noise_clap_features = pickle.load(fr).cpu()
-
-        with open("/projects/bcza/kb7180/avsbench_data/empty_clip.pkl", "rb") as fr:
-            self.empty_clip_feature = pickle.load(fr)
-
-        self.empty_mask = load_image_in_PIL_to_Tensor(
-            "/projects/bcza/kb7180/avsbench_data/empty_gt.png", mode='1', transform=self.mask_transform
-        )  # Updated mode to '1' for binary mask
-
-        empty_image = cv2.imread("/projects/bcza/kb7180/avsbench_data/empty_gt.png")
-        self.empty_image = cv2.cvtColor(empty_image, cv2.COLOR_BGR2RGB)
 
     def preprocess(self, x: torch.Tensor) -> torch.Tensor:
         """Normalize pixel values and pad to a square input."""
@@ -162,33 +137,17 @@ class S4Dataset_SAM(Dataset):  # Class name updated for single sound source
         clip_embeddings = []
         original_size_list = []
 
-        audio_aug = False
-        visual_aug = False
-
-        if self.augmentation:
-            audio_aug_rand = random.random()
-            visual_aug_rand = random.random()
-            if audio_aug_rand < self.audio_aug:
-                audio_aug = True
-            if visual_aug_rand < self.visual_aug:
-                visual_aug = True
-
-        # Apply audio augmentation
-        if audio_aug:
-            clap_embeddings = copy.deepcopy(self.noise_clap_features)
-        else:
-            clap_embedding_path = os.path.join(cfg.DATA.DIR_CLAP, self.split, category, video_name + '.pkl')
-            try:
-                clap_embeddings = self._get_clap_embeddings(audio_wav_path, clap_embedding_path)
-            except Exception as e:
-                print(f"Error in getting clap embeddings: {e}")
-                print(f"audio_wav_path: {audio_wav_path}")
+        clap_embedding_path = os.path.join(cfg.DATA.DIR_CLAP, self.split, category, video_name + '.pkl')
+        try:
+            clap_embeddings = self._get_clap_embeddings(audio_wav_path, clap_embedding_path)
+        except Exception as e:
+            print(f"Error in getting clap embeddings: {e}")
+            print(f"audio_wav_path: {audio_wav_path}")
         
         if self.mask_num == 1:
             clap_embeddings = clap_embeddings[0]
             clap_embeddings = clap_embeddings.unsqueeze(0)
 
-        # for img_id in range(1, 6):
         for img_id in range(1, self.mask_num + 1):  
             img_path = os.path.join(img_base_path, f"{video_name}_{img_id}.png")  # Updated naming format
             clip_embedding_path = os.path.join(cfg.DATA.DIR_CLIP, self.split, category, f"{video_name}_{img_id}.pkl")
@@ -213,11 +172,8 @@ class S4Dataset_SAM(Dataset):  # Class name updated for single sound source
 
         # Load masks
         for mask_id in range(1, self.mask_num + 1):
-            if audio_aug:
-                mask = copy.deepcopy(self.empty_mask)
-            else:
-                mask_path = os.path.join(mask_base_path, f"{video_name}_{mask_id}.png")  # Updated naming format
-                mask = load_image_in_PIL_to_Tensor(mask_path, transform=self.mask_transform, mode='1')  # Updated mode
+            mask_path = os.path.join(mask_base_path, f"{video_name}_{mask_id}.png")  # Updated naming format
+            mask = load_image_in_PIL_to_Tensor(mask_path, transform=self.mask_transform, mode='1')  # Updated mode
             masks.append(mask)
 
         sam_imgs_tensor = torch.stack(sam_imgs, dim=0)
