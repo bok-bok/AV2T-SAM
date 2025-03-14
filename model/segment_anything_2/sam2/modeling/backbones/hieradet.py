@@ -10,130 +10,14 @@ from typing import List, Tuple, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 
 from model.segment_anything_2.sam2.modeling.backbones.utils import (
     PatchEmbed,
     window_partition,
     window_unpartition,
 )
+from model.segment_anything_2.sam2.modeling.sam2_utils import MLP, DropPath
 
-from model.segment_anything_2.sam2.modeling.sam2_utils import DropPath, MLP
-
-
-class CrossAttention(nn.Module):
-    def __init__(self, dim, num_heads):
-        super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.q_proj = nn.Linear(dim, dim)
-        self.k_proj = nn.Linear(dim, dim)
-        self.v_proj = nn.Linear(dim, dim)
-        self.out_proj = nn.Linear(dim, dim)
-
-        self.N = 8 
-        self.prompt_proj = nn.Linear(dim, self.N * dim)
-
-        
-        # === Adapter module ===
-        # A small, trainable bottleneck MLP. In typical adapter style:
-        #   dim -> adapter_dim -> dim
-        adapter_dim = 128
-        self.adapter_down = nn.Linear(dim, adapter_dim, bias=False)
-        self.adapter_act = nn.ReLU()  # or GELU, etc.
-        self.adapter_up = nn.Linear(adapter_dim, dim, bias=False)
-        self.adapter_norm = nn.LayerNorm(dim)
-
-
-        # Initialize weights
-        self._reset_parameters()
-
-    def forward(self, x_img, prompt_features):
-        """
-        x_img: (B, H, W, C) - Image feature
-        x_clip: (B, C) - Clip feature
-        """
-
-        B, H, W, C = x_img.shape
-        L_img = H * W
-
-        # Reshape image features
-        # q = self.q_proj(x_img.reshape(B, L_img, C))  # (B, L_img, C)
-        # k = self.k_proj(x_clip)  # (B, L_clip, C)
-        # v = self.v_proj(x_clip)  # (B, L_clip, C)
-        x_img = x_img.reshape(B, L_img, C)
-
-        prompt_features = nn.GELU()(prompt_features)
-        prompt_features = self.prompt_proj(prompt_features)
-        # prompt_features = prompt_features.expand(B, L_img, -1)
-        prompt_features = prompt_features.reshape(B, self.N, C)
-
-        if torch.isnan(prompt_features).any() or torch.isinf(prompt_features).any():
-            print(f"CrossAttention: prompt_features has NaN or Inf values")
-
-        q = x_img.transpose(0, 1) # (L_img, B, C)
-        k = prompt_features.transpose(0, 1)  # (N, B, C)
-        v = prompt_features.transpose(0, 1)  # (N, B, C)
-
-        # Apply multi-head attention
-        x, _ = F.multi_head_attention_forward(
-            query=q, key=k, value=v, 
-            embed_dim_to_check=C,
-            num_heads=self.num_heads,
-            q_proj_weight=self.q_proj.weight,
-            k_proj_weight=self.k_proj.weight,
-            v_proj_weight=self.v_proj.weight,
-            in_proj_weight=None, 
-            in_proj_bias=torch.cat([self.q_proj.bias, self.k_proj.bias, self.v_proj.bias]),
-            bias_k=None,
-            bias_v=None,
-            add_zero_attn=False,
-            dropout_p=0.0,
-            out_proj_weight=self.out_proj.weight,
-            out_proj_bias=self.out_proj.bias,
-            use_separate_proj_weight=True,
-            training=self.training,
-            need_weights=False
-        )
-        if torch.isnan(x).any() or torch.isinf(x).any():
-            print(f"CrossAttention: x has NaN or Inf values")
-
-        x_adapter = self.adapter_down(x)
-        x_adapter = self.adapter_act(x_adapter)
-        x_out = self.adapter_up(x_adapter)
-        x_out = self.adapter_norm(x_out)
-        # x_out = x
-
-        if torch.isnan(x_out).any() or torch.isinf(x_out).any():
-            print(f"adapter: x_out has NaN or Inf values")
-
-        # Reshape back to image format (B, H, W, C)        
-        x_out = x_out.transpose(0, 1)
-
-        x_out = x_img + x_out
-        x_out = x_out.view(B, H, W, C)
-        return x_out
-
-    def _reset_parameters(self):
-        """
-        Initializes the weights of the layers with reasonable values to avoid
-        NaN losses or poor convergence.
-        """
-        nn.init.xavier_uniform_(self.q_proj.weight)
-        nn.init.xavier_uniform_(self.k_proj.weight)
-        nn.init.xavier_uniform_(self.v_proj.weight)
-        nn.init.xavier_uniform_(self.out_proj.weight)
-        nn.init.xavier_uniform_(self.prompt_proj.weight)
-        nn.init.xavier_uniform_(self.adapter_down.weight)
-        nn.init.xavier_uniform_(self.adapter_up.weight)
-        
-
-        nn.init.zeros_(self.q_proj.bias)
-        nn.init.zeros_(self.k_proj.bias)
-        nn.init.zeros_(self.v_proj.bias)
-        nn.init.zeros_(self.out_proj.bias)
-        nn.init.zeros_(self.prompt_proj.bias)
-        
 
 def do_pool(x: torch.Tensor, pool: nn.Module, norm: nn.Module = None) -> torch.Tensor:
     if pool is None:
@@ -210,7 +94,6 @@ class MultiScaleBlock(nn.Module):
         q_stride: Tuple[int, int] = None,
         act_layer: nn.Module = nn.GELU,
         window_size: int = 0,
-        use_cross_attention: bool = False,
     ):
         super().__init__()
 
@@ -225,9 +108,7 @@ class MultiScaleBlock(nn.Module):
 
         self.pool, self.q_stride = None, q_stride
         if self.q_stride:
-            self.pool = nn.MaxPool2d(
-                kernel_size=q_stride, stride=q_stride, ceil_mode=False
-            )
+            self.pool = nn.MaxPool2d(kernel_size=q_stride, stride=q_stride, ceil_mode=False)
 
         self.attn = MultiScaleAttention(
             dim,
@@ -235,13 +116,6 @@ class MultiScaleBlock(nn.Module):
             num_heads=num_heads,
             q_pool=self.pool,
         )
-        if use_cross_attention:
-            self.cross_attn = CrossAttention(dim, num_heads)
-            self.cross_attn_norm = norm_layer(dim)
-        else:
-            self.cross_attn = None
-            self.cross_attn_norm = None
-        # self.cross_attn = CrossAttention(dim, num_heads) if use_cross_attention else None
 
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
 
@@ -257,7 +131,7 @@ class MultiScaleBlock(nn.Module):
         if dim != dim_out:
             self.proj = nn.Linear(dim, dim_out)
 
-    def forward(self, x: torch.Tensor, prompt_features) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         shortcut = x  # B, H, W, C
         x = self.norm1(x)
 
@@ -274,8 +148,6 @@ class MultiScaleBlock(nn.Module):
         # Window Attention + Q Pooling (if stage change)
         x = self.attn(x)
 
-
-
         if self.q_stride:
             # Shapes have changed due to Q pooling
             window_size = self.window_size // self.q_stride[0]
@@ -289,20 +161,9 @@ class MultiScaleBlock(nn.Module):
         if self.window_size > 0:
             x = window_unpartition(x, window_size, pad_hw, (H, W))
 
-
-        if self.cross_attn and prompt_features is not None:
-            x = shortcut + self.drop_path(x)  # Add self-attention residual connection
-
-            x = x + self.drop_path(self.cross_attn(self.cross_attn_norm(x), prompt_features))
-
-            # x = shortcut + self.drop_path(x)
-            # MLP
-            x = x + self.drop_path(self.mlp(self.norm2(x))) # this is frozen
-
-        else:
-            x = shortcut + self.drop_path(x)
-            # MLP
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
+        x = shortcut + self.drop_path(x)
+        # MLP
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
         return x
 
 
@@ -336,7 +197,6 @@ class Hiera(nn.Module):
             20,
         ),
         return_interm_layers=True,  # return feats from every stage
-        cross_attn: bool = False,
     ):
         super().__init__()
 
@@ -358,22 +218,12 @@ class Hiera(nn.Module):
 
         # Windowed positional embedding (https://arxiv.org/abs/2311.05613)
         self.window_pos_embed_bkg_spatial_size = window_pos_embed_bkg_spatial_size
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, embed_dim, *self.window_pos_embed_bkg_spatial_size)
-        )
+        self.pos_embed = nn.Parameter(torch.zeros(1, embed_dim, *self.window_pos_embed_bkg_spatial_size))
         self.pos_embed_window = nn.Parameter(
             torch.zeros(1, embed_dim, self.window_spec[0], self.window_spec[0])
         )
 
-        dpr = [
-            x.item() for x in torch.linspace(0, drop_path_rate, depth)
-        ]  # stochastic depth decay rule
-        if cross_attn:
-            self.cross_attn_blocks = self.global_att_blocks
-            print(f"Using cross attention in layers : {self.cross_attn_blocks}")
-        else:
-            print("Not using cross attention")
-            self.cross_attn_blocks = []
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
 
         cur_stage = 1
         self.blocks = nn.ModuleList()
@@ -400,7 +250,6 @@ class Hiera(nn.Module):
                 drop_path=dpr[i],
                 q_stride=self.q_stride if i in self.q_pool_blocks else None,
                 window_size=window_size,
-                use_cross_attention=(i in self.cross_attn_blocks),
             )
 
             embed_dim = dim_out
@@ -425,10 +274,14 @@ class Hiera(nn.Module):
     def forward(self, x: torch.Tensor, prompted_feats: torch.Tensor) -> List[torch.Tensor]:
         
         
+        
+
+        
         if prompted_feats is None:
             use_adapter = False
         else:
             use_adapter = True
+
         x = self.patch_embed(x)
         # x: (B, H, W, C)
 
@@ -437,26 +290,28 @@ class Hiera(nn.Module):
 
         outputs = []
         B, H, W = x.shape[0], x.shape[1], x.shape[2]
-
+        cur_stage = 1
         for i, blk in enumerate(self.blocks):
 
-            # add prompted features 
+            # add prompted features
             current_gpu = blk.attn.qkv.weight.device
             x = x.to(current_gpu)
 
-            if use_adapter:
-                prompted_feats[i] = prompted_feats[i].to(current_gpu)
-                x = prompted_feats[i].reshape(B, 1, 1, -1) + x
-                x = blk(x, prompted_feats[i])
-            else:
-                x = blk(x, None)
 
-            if (i == self.stage_ends[-1]) or (
-                i in self.stage_ends and self.return_interm_layers
-            ):
+            if use_adapter:
+                cur_prompt = prompted_feats[i].to(current_gpu)
+
+                x = cur_prompt.reshape(B, 1, 1, -1) + x
+                x = blk(x)
+
+            else:
+                x = blk(x)
+
+            if (i == self.stage_ends[-1]) or (i in self.stage_ends and self.return_interm_layers):
+                cur_stage += 1
                 feats = x.permute(0, 3, 1, 2)
                 outputs.append(feats)
-        
+
         # update outputs's device to current device
         outputs = [output.to(current_gpu) for output in outputs]
         return outputs
