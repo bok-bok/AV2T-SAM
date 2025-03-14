@@ -1,20 +1,56 @@
 import argparse
-from PIL import Image
-import random
-import warnings
 import logging
 import os
+import random
+import warnings
 
-import torch
 import numpy as np
-from torch.utils.data import DataLoader
+import torch
 import torch.nn.parallel
+from PIL import Image
+from torch.utils.data import DataLoader
 
 from model.avt_sam import AVTSAM
-from utils.avs_dataset_m3 import MS3Dataset_SAM 
-from utility import mask_iou, Eval_Fmeasure, AverageMeter
+from utility import AverageMeter, Eval_Fmeasure, mask_iou
+from utils.avs_dataset_m3 import MS3Dataset_SAM
+from utils.avs_dataset_s4 import S4Dataset_SAM
 
 warnings.simplefilter("ignore", UserWarning)
+
+
+def get_model(args) -> AVTSAM:
+    # get model and move to device
+    model = AVTSAM(args).to(device=args.device)
+
+    gpu_count = torch.cuda.device_count()
+
+    assert gpu_count in [1, 4], "Only 1 or 4 GPUs are supported"
+
+    
+    print(f"Using {gpu_count} GPUs")
+    if gpu_count == 4:
+        if args.evf_version == "evf_sam2":
+            for i in range(48):
+                if i < 5:
+                    model.model.visual_model.image_encoder.trunk.blocks[i].to(f"cuda:3")
+                elif i < 20:
+                    model.model.visual_model.image_encoder.trunk.blocks[i].to(f"cuda:2")
+                elif i < 39:
+                    model.model.visual_model.image_encoder.trunk.blocks[i].to(f"cuda:1")
+                else:
+                    model.model.visual_model.image_encoder.trunk.blocks[i].to(f"cuda:0")
+        else:
+            for i in range(32):
+                if i < 9:
+                    model.model.visual_model.image_encoder.blocks[i].to(f"cuda:3")
+                elif i < 18:
+                    model.model.visual_model.image_encoder.blocks[i].to(f"cuda:2")
+                elif i < 29:
+                    model.model.visual_model.image_encoder.blocks[i].to(f"cuda:1")
+                else:
+                    model.model.visual_model.image_encoder.blocks[i].to(f"cuda:0")
+    return model
+
 
 # Setup logging
 def setup_logger(log_file):
@@ -128,16 +164,23 @@ def main(args):
     setup_logger(os.path.join(args.save_path, f"test_log_{args.name}.txt"))
     logging.info("Starting evaluation process")
     
-    model = AVTSAM(args).to(device=args.device)
+    model:AVTSAM = get_model(args)
     if args.weight_path:
         print(f"Loading weights from {args.weight_path}")
-        model.load_state_dict(torch.load(args.weight_path), strict=False)
+        # Add map_location to handle loading weights from different GPU configurations
+        map_location = {'cuda:%d' % i: args.device for i in range(torch.cuda.device_count(), 4)}
+        state_dict = torch.load(args.weight_path, map_location=map_location)
+        model.load_state_dict(state_dict, strict=False)
         
     
     
 
     # Parallelize model if needed
-    test_loader = DataLoader(MS3Dataset_SAM(split='test', args = args), batch_size=1, shuffle=False, num_workers=args.num_workers,
+    if args.dataset == "ms3":
+        test_loader = DataLoader(MS3Dataset_SAM(split='test'), batch_size=1, shuffle=False, num_workers=args.num_workers,
+                            pin_memory=True)
+    elif args.dataset == "s4":
+        test_loader = DataLoader(S4Dataset_SAM(split='test'), batch_size=1, shuffle=False, num_workers=args.num_workers,
                             pin_memory=True)
 
     # Evaluate
