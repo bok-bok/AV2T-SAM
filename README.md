@@ -17,10 +17,10 @@ pip install -r requirements.txt
 
 - Follow the guidance of [https://github.com/OpenNLPLab/AVSBench](https://github.com/OpenNLPLab/AVSBench) to download the AVSBench dataset.
 #### 2. dataset location configuration
-- Modify a path root variable in utils/config_m3.py and utils/config_s4.py. 
+- Modify path root variables in utils/config_m3.py and utils/config_s4.py. 
 
 ### pre-trained backbones 
-- Place all weights from [https://drive.google.com/drive/folders/1fKmTQpXpIMI6Ex9KO_OommMYZLa92wA5?usp=drive_link](here) to pretrained directory. 
+- Place all weights from [here](https://drive.google.com/drive/folders/1fKmTQpXpIMI6Ex9KO_OommMYZLa92wA5?usp=drive_link) to pretrained directory. 
 ---
 
 ### Training 
