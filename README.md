@@ -20,7 +20,7 @@ pip install -r requirements.txt
 - Modify path root variables in utils/config_m3.py and utils/config_s4.py. 
 
 ### pre-trained backbones 
-- Place all weights from [here](https://drive.google.com/drive/folders/1fKmTQpXpIMI6Ex9KO_OommMYZLa92wA5?usp=drive_link) to pretrained directory. 
+- Place all weights from [here](https://huggingface.co/Kyungbok/AV2T-SAM/tree/main) to pretrained directory. 
 ---
 
 ### Training 
